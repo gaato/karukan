@@ -2,7 +2,12 @@
 //!
 //! These tests verify that the kanji conversion functionality works correctly.
 //!
-//! Note: These tests require downloading models from HuggingFace on first run.
+//! Note: Most tests in this file require downloading models from HuggingFace
+//! and are marked with `#[ignore]`. To run them:
+//!
+//! ```sh
+//! cargo test -p karukan-engine -- --ignored
+//! ```
 
 use karukan_engine::kanji::ConversionConfig;
 
