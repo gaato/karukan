@@ -17,6 +17,7 @@ mod mode_toggle;
 mod passthrough;
 mod pending_romaji;
 mod predictive;
+mod profile;
 mod rewriter;
 mod strategy;
 mod surrounding;

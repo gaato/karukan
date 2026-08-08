@@ -13,6 +13,7 @@ model = "jinen-v2-small-q5"     # メインモデル（モデルID or GGUFパス
 light_model = "jinen-v2-xsmall-q5"  # 軽量モデル（ビームサーチ・長文用）
 use_context = true              # Surrounding Textを変換に使用する
 max_context_length = 10         # コンテキストの最大文字数
+profile = ""                    # 変換プロフィール（例: "田中太郎/エンジニア"。[Conversion Profile](#conversion-profile) 参照）
 short_input_threshold = 10      # ビームサーチを使うトークン数の上限
 beam_width = 3                  # ビーム幅
 max_latency_ms = 100            # メインモデルの許容レイテンシ（ms）。超過時は軽量モデルに自動切替（0 = 無効）
@@ -42,6 +43,10 @@ max_surface_chars = 50         # 学習する変換結果の最大文字数
 入力と同時にかな漢字変換の結果をプリエディットへリアルタイム表示します（Spaceを押さずに変換が進む）。`Ctrl+Shift+L` でON/OFFを切り替えられ、既定では `live_conversion = true` で有効です。
 
 長文入力でも1キーあたりのレイテンシを一定に保つため、変換中のバッファを内部で最大 `composing_chunk_len` 文字（既定30）のチャンクに分割し、編集した箇所のチャンクだけを再変換します。チャンクは内部的な分割で、ユーザーには連続した1つのプリエディットとして見えます。記号・数字の連続は日本語とは別チャンクに分けてそのまま通すため、`123456` のような並びが変換で崩れることはありません。
+
+## Conversion Profile
+
+`profile` に名前・職業・趣味などの自由なテキスト（例: `田中太郎/エンジニア`）を設定すると、モデルへ渡す左コンテキストの先頭に `プロフィール:{profile}・発言:{文脈}` の形で毎回付与され、それに合わせた変換（自分の名前の読みなど）が出やすくなります。ライブ変換・Space変換の両方に適用されます。末尾25文字まで使用されるため、10〜20文字程度を推奨します。空（既定）で無効です。
 
 ## Conversion Strategy
 
