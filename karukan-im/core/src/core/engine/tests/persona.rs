@@ -33,15 +33,10 @@ fn seed_cache(engine: &mut InputMethodEngine, katakana: &str, lctx: &str, conver
 #[test]
 fn test_persona_prefixes_model_lctx() {
     // With a persona configured, the model lctx (and thus the cache key) is
-    // 「プロフィール:{p}・発言:{ctx}」 — the seeded entry is only reachable
-    // through that exact prefix.
+    // 「{persona}。{ctx}」 — the seeded entry is only reachable through
+    // that exact prefix.
     let mut engine = persona_engine("田中太郎/エンジニア");
-    seed_cache(
-        &mut engine,
-        "アイ",
-        "プロフィール:田中太郎/エンジニア・発言:",
-        "HIT",
-    );
+    seed_cache(&mut engine, "アイ", "田中太郎/エンジニア。", "HIT");
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     assert_eq!(engine.chunks[0].converted, "HIT");
@@ -60,7 +55,7 @@ fn test_empty_persona_leaves_lctx_unchanged() {
 fn test_long_persona_keeps_its_tail() {
     // Only the last 25 chars of an over-long persona reach the lctx.
     let mut engine = persona_engine(&"あ".repeat(30));
-    let lctx = format!("プロフィール:{}・発言:", "あ".repeat(25));
+    let lctx = format!("{}。", "あ".repeat(25));
     seed_cache(&mut engine, "アイ", &lctx, "HIT");
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
@@ -105,8 +100,8 @@ fn test_persona_applies_to_every_chunk_lctx() {
         ..EngineConfig::default()
     };
     let mut engine = InputMethodEngine::with_config(config);
-    seed_cache(&mut engine, "アイ", "プロフィール:太郎・発言:", "壱");
-    seed_cache(&mut engine, "ウエ", "プロフィール:太郎・発言:壱", "弐");
+    seed_cache(&mut engine, "アイ", "太郎。", "壱");
+    seed_cache(&mut engine, "ウエ", "太郎。壱", "弐");
     for k in ['a', 'i', 'u', 'e'] {
         engine.process_key(&press(k));
     }

@@ -201,20 +201,19 @@ impl InputMethodEngine {
         candidates
     }
 
-    /// The lctx the model actually receives: the configured conversion
-    /// persona (`[conversion] persona`, last [`MAX_PERSONA_CHARS`] chars) as
-    /// a fixed prefix — `プロフィール:{p}・発言:{ctx}` (the label is
-    /// model-facing natural Japanese, independent of the config key) — or
-    /// `ctx` unchanged when no persona is set. Applied at the single model
-    /// entry point (`run_kana_kanji_conversion`), so live chunks and Space
-    /// conversion both carry it and it participates in the conversion cache
-    /// key.
+    /// The lctx the model actually receives: the configured persona
+    /// keywords as a plain-text prefix — `{persona}。{ctx}` — or `ctx`
+    /// unchanged when no persona is set. No labels: the model is too small
+    /// to understand pseudo-structured prompts, so the keywords simply look
+    /// like the preceding sentence. Applied at the single model entry point
+    /// (`run_kana_kanji_conversion`), so live chunks and Space conversion
+    /// both carry it and it participates in the conversion cache key.
     fn persona_lctx(&self, ctx: &str) -> String {
         let persona = self.effective_persona();
         if persona.is_empty() {
             return ctx.to_string();
         }
-        format!("プロフィール:{}・発言:{}", persona, ctx)
+        format!("{}。{}", persona, ctx)
     }
 
     /// The persona text as the model receives it: trimmed, last
