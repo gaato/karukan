@@ -68,18 +68,31 @@ fn test_long_persona_keeps_its_tail() {
 }
 
 #[test]
-fn test_aux_indicator_marks_active_persona() {
-    // The mode indicator gains a `P` while a persona is configured, so the
-    // user can see conversions carry it (the lctx display does not show it).
+fn test_aux_indicator_shows_active_persona() {
+    // The mode indicator shows the persona content the model receives, so
+    // what is influencing the conversion is visible at a glance.
     let mut engine = persona_engine("太郎");
     let result = engine.process_key(&press('a'));
     let aux = last_aux_text(&result).expect("aux text action");
-    assert!(aux.contains("[あ]P"), "aux was: {aux}");
+    assert!(aux.contains("[あ]P:太郎"), "aux was: {aux}");
 
     let mut engine = persona_engine("");
     let result = engine.process_key(&press('a'));
     let aux = last_aux_text(&result).expect("aux text action");
-    assert!(!aux.contains("[あ]P"), "aux was: {aux}");
+    assert!(!aux.contains("P:"), "aux was: {aux}");
+}
+
+#[test]
+fn test_aux_indicator_shows_effective_tail_of_long_persona() {
+    // An over-long persona is shown as its effective last-25-chars tail —
+    // exactly what the model gets.
+    let mut engine = persona_engine(&format!("XXX{}", "あ".repeat(25)));
+    let result = engine.process_key(&press('a'));
+    let aux = last_aux_text(&result).expect("aux text action");
+    assert!(
+        aux.contains(&format!("[あ]P:{}", "あ".repeat(25))) && !aux.contains("XXX"),
+        "aux was: {aux}"
+    );
 }
 
 #[test]

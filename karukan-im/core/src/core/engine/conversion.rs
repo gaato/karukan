@@ -210,15 +210,23 @@ impl InputMethodEngine {
     /// conversion both carry it and it participates in the conversion cache
     /// key.
     fn persona_lctx(&self, ctx: &str) -> String {
-        let persona = self.config.persona.trim();
+        let persona = self.effective_persona();
         if persona.is_empty() {
             return ctx.to_string();
         }
-        format!(
-            "プロフィール:{}・発言:{}",
-            keep_last_chars(persona, MAX_PERSONA_CHARS),
-            ctx
-        )
+        format!("プロフィール:{}・発言:{}", persona, ctx)
+    }
+
+    /// The persona text as the model receives it: trimmed, last
+    /// [`MAX_PERSONA_CHARS`] chars; empty when unset. Also what the aux
+    /// mode indicator displays, so screen and model always agree.
+    pub(super) fn effective_persona(&self) -> String {
+        let persona = self.config.persona.trim();
+        if persona.is_empty() {
+            String::new()
+        } else {
+            keep_last_chars(persona, MAX_PERSONA_CHARS)
+        }
     }
 
     /// Display name of the model(s) a strategy dispatches to.

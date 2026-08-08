@@ -146,13 +146,14 @@ impl InputMethodEngine {
             // user sees they're not in plain alphabet input.
             InputMode::Emoji => "[☺]",
         };
-        // `P` marks an active conversion persona, so whether conversions
-        // carry it is visible at a glance (e.g. ⚡[あ]P) — the persona
-        // itself is not shown in the lctx display.
-        let persona = if self.config.persona.trim().is_empty() {
-            ""
+        // Show the active conversion persona's content — the effective
+        // tail the model actually receives — so what is influencing the
+        // conversion is visible at a glance (e.g. ⚡[あ]P:プログラミング).
+        let persona = self.effective_persona();
+        let persona = if persona.is_empty() {
+            String::new()
         } else {
-            "P"
+            format!("P:{}", persona)
         };
         if self.live.enabled {
             format!("⚡{}{}", base, persona)
