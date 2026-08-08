@@ -20,8 +20,8 @@ const MAX_PREDICTIVE_SUGGESTIONS: usize = 3;
 /// single key would flood the list from a large dictionary
 const MIN_PREDICTIVE_PREFIX_CHARS: usize = 2;
 
-/// Max profile chars kept (tail) when prepended to the lctx
-const MAX_PROFILE_CHARS: usize = 25;
+/// Max persona chars kept (tail) when prepended to the lctx
+const MAX_PERSONA_CHARS: usize = 25;
 
 /// How the unresolved romaji tail constrains the predictive lookup.
 enum TailConstraint {
@@ -102,12 +102,12 @@ impl InputMethodEngine {
     /// `api_context` is the left context (lctx) fed to the model. Callers pass
     /// `truncate_context_for_api()` for a whole-buffer conversion, or — for
     /// chunked live conversion — the converted text of the preceding chunks.
-    /// The configured conversion profile is prepended here (`profile_lctx`),
+    /// The configured conversion persona is prepended here (`persona_lctx`),
     /// so every conversion path carries it.
     ///
     /// Results are cached by (katakana reading, lctx, strategy) — everything
     /// that determines the model output, beam width included via the strategy
-    /// and the profile via the lctx. A hit skips inference entirely, so live
+    /// and the persona via the lctx. A hit skips inference entirely, so live
     /// conversion re-running all chunks each keystroke only pays for the
     /// chunks that actually changed.
     pub(super) fn run_kana_kanji_conversion(
@@ -122,7 +122,7 @@ impl InputMethodEngine {
         let katakana = karukan_engine::hiragana_to_katakana(reading);
 
         let strategy = self.determine_strategy(reading, num_candidates);
-        let lctx = self.profile_lctx(api_context);
+        let lctx = self.persona_lctx(api_context);
 
         // Cache lookup comes before the converter check: a hit needs no model.
         let key = ConversionCacheKey {
@@ -202,19 +202,21 @@ impl InputMethodEngine {
     }
 
     /// The lctx the model actually receives: the configured conversion
-    /// profile (`[conversion] profile`, last [`MAX_PROFILE_CHARS`] chars) as
-    /// a fixed prefix — `プロフィール:{p}・発言:{ctx}` — or `ctx` unchanged
-    /// when no profile is set. Applied at the single model entry point
-    /// (`run_kana_kanji_conversion`), so live chunks and Space conversion
-    /// both carry it and it participates in the conversion cache key.
-    fn profile_lctx(&self, ctx: &str) -> String {
-        let profile = self.config.profile.trim();
-        if profile.is_empty() {
+    /// persona (`[conversion] persona`, last [`MAX_PERSONA_CHARS`] chars) as
+    /// a fixed prefix — `プロフィール:{p}・発言:{ctx}` (the label is
+    /// model-facing natural Japanese, independent of the config key) — or
+    /// `ctx` unchanged when no persona is set. Applied at the single model
+    /// entry point (`run_kana_kanji_conversion`), so live chunks and Space
+    /// conversion both carry it and it participates in the conversion cache
+    /// key.
+    fn persona_lctx(&self, ctx: &str) -> String {
+        let persona = self.config.persona.trim();
+        if persona.is_empty() {
             return ctx.to_string();
         }
         format!(
             "プロフィール:{}・発言:{}",
-            keep_last_chars(profile, MAX_PROFILE_CHARS),
+            keep_last_chars(persona, MAX_PERSONA_CHARS),
             ctx
         )
     }

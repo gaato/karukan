@@ -1,17 +1,17 @@
-//! Tests for the conversion profile (config `profile`): a fixed prefix on
+//! Tests for the conversion persona (config `persona`): a fixed prefix on
 //! the lctx sent to the model.
 //!
 //! These run without a loaded model: the conversion cache is seeded with the
-//! lctx the engine is expected to build, and a hit proves the profile was
+//! lctx the engine is expected to build, and a hit proves the persona was
 //! injected into the model call and the cache key.
 
 use super::*;
 use crate::core::engine::EngineConfig;
 use crate::core::engine::cache::ConversionCacheKey;
 
-fn profile_engine(profile: &str) -> InputMethodEngine {
+fn persona_engine(persona: &str) -> InputMethodEngine {
     let config = EngineConfig {
-        profile: profile.to_string(),
+        persona: persona.to_string(),
         ..EngineConfig::default()
     };
     InputMethodEngine::with_config(config)
@@ -31,11 +31,11 @@ fn seed_cache(engine: &mut InputMethodEngine, katakana: &str, lctx: &str, conver
 }
 
 #[test]
-fn test_profile_prefixes_model_lctx() {
-    // With a profile configured, the model lctx (and thus the cache key) is
+fn test_persona_prefixes_model_lctx() {
+    // With a persona configured, the model lctx (and thus the cache key) is
     // 「プロフィール:{p}・発言:{ctx}」 — the seeded entry is only reachable
     // through that exact prefix.
-    let mut engine = profile_engine("田中太郎/エンジニア");
+    let mut engine = persona_engine("田中太郎/エンジニア");
     seed_cache(
         &mut engine,
         "アイ",
@@ -48,8 +48,8 @@ fn test_profile_prefixes_model_lctx() {
 }
 
 #[test]
-fn test_empty_profile_leaves_lctx_unchanged() {
-    let mut engine = profile_engine("");
+fn test_empty_persona_leaves_lctx_unchanged() {
+    let mut engine = persona_engine("");
     seed_cache(&mut engine, "アイ", "", "HIT");
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
@@ -57,9 +57,9 @@ fn test_empty_profile_leaves_lctx_unchanged() {
 }
 
 #[test]
-fn test_long_profile_keeps_its_tail() {
-    // Only the last 25 chars of an over-long profile reach the lctx.
-    let mut engine = profile_engine(&"あ".repeat(30));
+fn test_long_persona_keeps_its_tail() {
+    // Only the last 25 chars of an over-long persona reach the lctx.
+    let mut engine = persona_engine(&"あ".repeat(30));
     let lctx = format!("プロフィール:{}・発言:", "あ".repeat(25));
     seed_cache(&mut engine, "アイ", &lctx, "HIT");
     engine.process_key(&press('a'));
@@ -68,11 +68,11 @@ fn test_long_profile_keeps_its_tail() {
 }
 
 #[test]
-fn test_profile_applies_to_every_chunk_lctx() {
-    // Chunked live conversion: each chunk's lctx gets the same profile
+fn test_persona_applies_to_every_chunk_lctx() {
+    // Chunked live conversion: each chunk's lctx gets the same persona
     // prefix, with the preceding chunks' converted text after it.
     let config = EngineConfig {
-        profile: "太郎".to_string(),
+        persona: "太郎".to_string(),
         composing_chunk_len: 2,
         ..EngineConfig::default()
     };
