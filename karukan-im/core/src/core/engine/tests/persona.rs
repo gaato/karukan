@@ -68,6 +68,21 @@ fn test_long_persona_keeps_its_tail() {
 }
 
 #[test]
+fn test_aux_indicator_marks_active_persona() {
+    // The mode indicator gains a `P` while a persona is configured, so the
+    // user can see conversions carry it (the lctx display does not show it).
+    let mut engine = persona_engine("太郎");
+    let result = engine.process_key(&press('a'));
+    let aux = last_aux_text(&result).expect("aux text action");
+    assert!(aux.contains("[あ]P"), "aux was: {aux}");
+
+    let mut engine = persona_engine("");
+    let result = engine.process_key(&press('a'));
+    let aux = last_aux_text(&result).expect("aux text action");
+    assert!(!aux.contains("[あ]P"), "aux was: {aux}");
+}
+
+#[test]
 fn test_persona_applies_to_every_chunk_lctx() {
     // Chunked live conversion: each chunk's lctx gets the same persona
     // prefix, with the preceding chunks' converted text after it.
