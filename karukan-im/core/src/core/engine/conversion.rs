@@ -122,18 +122,17 @@ impl InputMethodEngine {
         let katakana = karukan_engine::hiragana_to_katakana(reading);
 
         let strategy = self.determine_strategy(reading, num_candidates);
-        let lctx = self.persona_lctx(api_context);
 
         // Cache lookup comes before the converter check: a hit needs no model.
         let key = ConversionCacheKey {
             katakana: katakana.clone(),
-            lctx: lctx.clone(),
+            lctx: self.persona_lctx(api_context),
             strategy: strategy.clone(),
         };
         if let Some(candidates) = self.conversion_cache.get(&key) {
             debug!(
                 "convert: cache hit reading=\"{}\" lctx=\"{}\" strategy={:?}",
-                reading, lctx, strategy
+                reading, key.lctx, strategy
             );
             // conversion_ms stays 0 (no inference ran) and the adaptive flag
             // is left untouched — a cache hit says nothing about model speed.
@@ -143,7 +142,7 @@ impl InputMethodEngine {
 
         debug!(
             "convert: reading=\"{}\" lctx=\"{}\" candidates={} strategy={:?}",
-            reading, lctx, num_candidates, strategy
+            reading, key.lctx, num_candidates, strategy
         );
 
         let start = Instant::now();
@@ -158,11 +157,14 @@ impl InputMethodEngine {
                 };
                 let bw = *beam_width;
                 let (default_top1, light_candidates) = std::thread::scope(|s| {
-                    let h_default =
-                        s.spawn(|| converter.convert(&katakana, &lctx, 1).unwrap_or_default());
+                    let h_default = s.spawn(|| {
+                        converter
+                            .convert(&katakana, &key.lctx, 1)
+                            .unwrap_or_default()
+                    });
                     let h_beam = s.spawn(|| {
                         light_converter
-                            .convert(&katakana, &lctx, bw)
+                            .convert(&katakana, &key.lctx, bw)
                             .unwrap_or_default()
                     });
                     (
@@ -177,14 +179,14 @@ impl InputMethodEngine {
                     return vec![];
                 };
                 light_converter
-                    .convert(&katakana, &lctx, 1)
+                    .convert(&katakana, &key.lctx, 1)
                     .unwrap_or_default()
             }
-            ConversionStrategy::MainModelOnly => {
-                converter.convert(&katakana, &lctx, 1).unwrap_or_default()
-            }
+            ConversionStrategy::MainModelOnly => converter
+                .convert(&katakana, &key.lctx, 1)
+                .unwrap_or_default(),
             ConversionStrategy::MainModelBeam { beam_width } => converter
-                .convert(&katakana, &lctx, *beam_width)
+                .convert(&katakana, &key.lctx, *beam_width)
                 .unwrap_or_default(),
         };
 
@@ -201,13 +203,10 @@ impl InputMethodEngine {
         candidates
     }
 
-    /// The lctx the model actually receives: the configured persona
-    /// keywords concatenated in front of `ctx`, nothing more — no labels,
-    /// no separator. The model is too small to understand pseudo-structured
-    /// prompts; the keywords simply read as preceding text. Applied at the
-    /// single model entry point (`run_kana_kanji_conversion`), so live
-    /// chunks and Space conversion both carry it and it participates in the
-    /// conversion cache key.
+    /// Prepend the persona keywords to `ctx` — bare concatenation, so they
+    /// read as preceding text. Applied at the single model entry point
+    /// (`run_kana_kanji_conversion`), so live chunks and Space conversion
+    /// both carry it and it lands in the conversion cache key.
     fn persona_lctx(&self, ctx: &str) -> String {
         let persona = self.effective_persona();
         if persona.is_empty() {

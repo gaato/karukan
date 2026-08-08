@@ -146,19 +146,14 @@ impl InputMethodEngine {
             // user sees they're not in plain alphabet input.
             InputMode::Emoji => "[☺]",
         };
-        // Show the active conversion persona's content — the effective
-        // tail the model actually receives — so what is influencing the
-        // conversion is visible at a glance (e.g. ⚡[あ]P:プログラミング).
+        // The effective persona is shown verbatim (e.g. ⚡[あ]P:プログラミング)
+        // so what the model receives is visible at a glance.
+        let live = if self.live.enabled { "⚡" } else { "" };
         let persona = self.effective_persona();
-        let persona = if persona.is_empty() {
-            String::new()
+        if persona.is_empty() {
+            format!("{}{}", live, base)
         } else {
-            format!("P:{}", persona)
-        };
-        if self.live.enabled {
-            format!("⚡{}{}", base, persona)
-        } else {
-            format!("{}{}", base, persona)
+            format!("{}{}P:{}", live, base, persona)
         }
     }
 

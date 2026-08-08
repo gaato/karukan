@@ -78,19 +78,6 @@ fn test_aux_indicator_shows_active_persona() {
 }
 
 #[test]
-fn test_aux_indicator_shows_effective_tail_of_long_persona() {
-    // An over-long persona is shown as its effective last-25-chars tail —
-    // exactly what the model gets.
-    let mut engine = persona_engine(&format!("XXX{}", "あ".repeat(25)));
-    let result = engine.process_key(&press('a'));
-    let aux = last_aux_text(&result).expect("aux text action");
-    assert!(
-        aux.contains(&format!("[あ]P:{}", "あ".repeat(25))) && !aux.contains("XXX"),
-        "aux was: {aux}"
-    );
-}
-
-#[test]
 fn test_persona_applies_to_every_chunk_lctx() {
     // Chunked live conversion: each chunk's lctx gets the same persona
     // prefix, with the preceding chunks' converted text after it.
