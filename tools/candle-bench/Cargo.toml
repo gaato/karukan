@@ -1,0 +1,21 @@
+[package]
+name = "candle-bench"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone tool, detached from the karukan workspace on purpose: candle is a
+# heavy dependency that normal builds and CI must not pay for.
+[workspace]
+
+[dependencies]
+karukan-engine = { path = "../../karukan-engine" }
+# Pinned to the same version as karukan's Cargo.lock, and used directly to read
+# llama.cpp's default n_threads.
+llama-cpp-2 = "=0.1.154"
+rayon = "1"
+candle-core = "0.11"
+candle-transformers = "0.11"
+tokenizers = "0.23"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
