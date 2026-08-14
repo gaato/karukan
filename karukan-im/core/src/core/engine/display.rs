@@ -293,6 +293,22 @@ impl InputMethodEngine {
         )
     }
 
+    /// The open window's line as it stands, for a key that changes something
+    /// around it without rebuilding the list (the mode toggle, the verbose
+    /// toggle). The selected candidate's own reading wins: a predictive
+    /// candidate reads longer than the state's.
+    pub(super) fn format_aux_conversion(
+        &self,
+        reading: &str,
+        candidates: &CandidateList,
+    ) -> String {
+        let shown = candidates
+            .selected()
+            .and_then(|c| c.reading.as_deref())
+            .unwrap_or(reading);
+        self.format_aux_conversion_with_page(shown, Some(candidates))
+    }
+
     /// Format aux text for auto-suggest mode
     /// Timing shows inference_ms/process_key_ms (process_key_ms is from previous keystroke)
     pub(super) fn format_aux_suggest(&self) -> String {
