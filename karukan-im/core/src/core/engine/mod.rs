@@ -174,9 +174,8 @@ pub struct InputMethodEngine {
     learning: Option<LearningCache>,
     /// Background model-loading state: model resolution can block on the
     /// network, so it never runs on the key-event thread. Driven by
-    /// `poll_loaded_models` at the top of `process_key`, which installs
-    /// finished converters and retries download failures with backoff;
-    /// until a load succeeds the engine runs dictionary/kana-only.
+    /// `poll_loaded_models` at the top of `process_key`; until a load
+    /// succeeds the engine runs dictionary/kana-only.
     model_loading: init::ModelLoading,
 }
 

@@ -40,15 +40,15 @@ pub(super) enum LoadFailure {
 pub(super) enum ModelLoading {
     /// Nothing in flight: models installed, never requested, or given up.
     Idle,
-    /// A loader thread is running; its result arrives on `rx`.
+    /// A loader thread is running.
     Loading {
-        rx: mpsc::Receiver<std::result::Result<LoadedConverters, LoadFailure>>,
+        rx: mpsc::Receiver<Result<LoadedConverters, LoadFailure>>,
         spec: ModelLoadSpec,
         attempts: u32,
     },
-    /// The last attempt failed on the network. Retried by the first key
-    /// event at or after `retry_at`, so a session that started offline
-    /// picks the model up once connectivity returns.
+    /// The last attempt failed on the network; the first key event at or
+    /// after `retry_at` retries, so a session that started offline picks
+    /// the model up once connectivity returns.
     Failed {
         spec: ModelLoadSpec,
         attempts: u32,
@@ -61,13 +61,10 @@ pub(super) enum ModelLoading {
 fn retry_backoff(attempts: u32) -> Duration {
     const BASE: Duration = Duration::from_secs(30);
     const MAX: Duration = Duration::from_secs(600);
-    BASE.saturating_mul(1 << (attempts.saturating_sub(1)).min(5))
-        .min(MAX)
+    (BASE * (1 << (attempts.saturating_sub(1)).min(5))).min(MAX)
 }
 
-/// A failure is transient iff a download error is in the chain: the network
-/// may come back, while an unknown variant or a broken model file fails the
-/// same way every time.
+/// Transient iff the chain contains a `KanjiError::Download`.
 fn classify_failure(e: &anyhow::Error) -> LoadFailure {
     let is_download = e.chain().any(|c| {
         matches!(
@@ -185,9 +182,6 @@ impl InputMethodEngine {
     }
 
     /// Load the conversion models on a background thread; never blocks.
-    ///
-    /// The result arrives through the `model_loading` channel and is
-    /// installed by `poll_loaded_models` on the next key event.
     fn spawn_model_loading(&mut self, settings: &Settings) {
         if self.converters.kanji.is_some() || !matches!(self.model_loading, ModelLoading::Idle) {
             return;
@@ -235,9 +229,7 @@ impl InputMethodEngine {
     }
 
     /// Drive the background loading state; non-blocking, called at the top
-    /// of `process_key`. Installs finished converters, schedules a retry
-    /// after a transient (download) failure, and gives up for the session
-    /// on a permanent one (already logged by the loader).
+    /// of `process_key`. Failures were already logged by the loader thread.
     pub(super) fn poll_loaded_models(&mut self) {
         match std::mem::replace(&mut self.model_loading, ModelLoading::Idle) {
             ModelLoading::Idle => {}
@@ -259,8 +251,9 @@ impl InputMethodEngine {
                 Err(mpsc::TryRecvError::Empty) => {
                     self.model_loading = ModelLoading::Loading { rx, spec, attempts };
                 }
-                // The loader died without answering (panic): give up.
-                Err(mpsc::TryRecvError::Disconnected) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    tracing::warn!("model loader thread died; continuing without model");
+                }
             },
             ModelLoading::Failed {
                 spec,
