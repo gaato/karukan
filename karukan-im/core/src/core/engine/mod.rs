@@ -89,22 +89,23 @@ impl AnnotatedCandidate {
     }
 }
 
-/// Resolve a model variant id from settings.
+/// Resolve a model spec from settings.
 ///
 /// - `model` is None or empty → default variant from registry
-/// - `model` matches a known variant id → that variant
-/// - otherwise → error (unknown variant)
-pub fn resolve_variant_id(model: Option<&str>) -> anyhow::Result<String> {
+/// - `hf:owner/repo/file.gguf` or a `.gguf` path → passed through as-is
+///   (`Backend::from_spec` resolves the files at load time)
+/// - a known variant id → that variant
+/// - otherwise → error (unknown variant or malformed `hf:` spec)
+pub fn resolve_model_spec(model: Option<&str>) -> anyhow::Result<String> {
     let reg = karukan_engine::kanji::registry();
-    match model {
-        Some(id) if !id.is_empty() => {
-            if reg.find_variant(id).is_some() {
-                Ok(id.to_string())
-            } else {
-                anyhow::bail!("unknown model variant: {}", id)
-            }
+    let Some(spec) = model.filter(|s| !s.is_empty()) else {
+        return Ok(reg.default_model.clone());
+    };
+    match spec.parse::<karukan_engine::ModelSpec>()? {
+        karukan_engine::ModelSpec::Variant(id) if reg.find_variant(&id).is_none() => {
+            anyhow::bail!("unknown model variant: {}", id)
         }
-        _ => Ok(reg.default_model.clone()),
+        _ => Ok(spec.to_string()),
     }
 }
 

@@ -16,9 +16,9 @@ pub(super) struct LoadedConverters {
     pub light_kanji: Option<KanaKanjiConverter>,
 }
 
-/// Create a KanaKanjiConverter from a variant id, optionally setting thread count.
-fn create_converter(variant_id: &str, n_threads: u32) -> Result<KanaKanjiConverter> {
-    let backend = karukan_engine::Backend::from_variant_id(variant_id)?;
+/// Create a KanaKanjiConverter from a model spec, optionally setting thread count.
+fn create_converter(spec: &str, n_threads: u32) -> Result<KanaKanjiConverter> {
+    let backend = karukan_engine::Backend::from_spec(spec)?;
     let mut converter = KanaKanjiConverter::new(backend)?;
     if n_threads > 0 {
         converter.set_n_threads(n_threads);
@@ -38,10 +38,9 @@ fn load_converters(
 ) -> Result<LoadedConverters> {
     let (kanji, light_kanji) = match strategy {
         StrategyMode::Light => {
-            let variant =
-                resolve_variant_id(light_model).context("invalid light_model settings")?;
-            let converter = create_converter(&variant, n_threads)
-                .context("failed to initialize light model")?;
+            let spec = resolve_model_spec(light_model).context("invalid light_model settings")?;
+            let converter =
+                create_converter(&spec, n_threads).context("failed to initialize light model")?;
             tracing::info!(
                 "Light model loaded into main slot: {}",
                 converter.model_display_name()
@@ -49,26 +48,26 @@ fn load_converters(
             (converter, None)
         }
         StrategyMode::Main => {
-            let variant = resolve_variant_id(model).context("invalid model settings")?;
+            let spec = resolve_model_spec(model).context("invalid model settings")?;
             let converter =
-                create_converter(&variant, n_threads).context("failed to initialize main model")?;
+                create_converter(&spec, n_threads).context("failed to initialize main model")?;
             tracing::info!("Main model loaded: {}", converter.model_display_name());
             (converter, None)
         }
         StrategyMode::Adaptive => {
-            let variant = resolve_variant_id(model).context("invalid model settings")?;
-            let main = create_converter(&variant, n_threads)
-                .context("failed to initialize default model")?;
+            let spec = resolve_model_spec(model).context("invalid model settings")?;
+            let main =
+                create_converter(&spec, n_threads).context("failed to initialize default model")?;
             tracing::info!("Default model loaded: {}", main.model_display_name());
 
-            let light_variant = match resolve_variant_id(light_model) {
-                Ok(id) => id,
+            let light_spec = match resolve_model_spec(light_model) {
+                Ok(spec) => spec,
                 Err(e) => {
                     tracing::warn!("Invalid light_model settings, using default: {}", e);
                     karukan_engine::kanji::registry().default_model.clone()
                 }
             };
-            let light = match create_converter(&light_variant, n_threads) {
+            let light = match create_converter(&light_spec, n_threads) {
                 Ok(converter) => {
                     tracing::info!("Beam model loaded");
                     Some(converter)

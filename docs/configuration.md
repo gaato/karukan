@@ -12,7 +12,7 @@ chunk_alphabets = 0             # Chunk に残せる英字の数（0 = 英字は
 strategy = "adaptive"           # 変換ストラテジー（adaptive / light / main）
 num_candidates = 9              # 変換候補数（Space押下時）
 n_threads = 4                   # 推論スレッド数（0 = 全コア使用）
-model = "jinen-v2-small-q5"     # メインモデル（モデルID or GGUFパス）
+model = "jinen-v2-small-q5"     # メインモデル（モデルID / hf:オーナー/リポジトリ/ファイル名 / GGUFパス）
 light_model = "jinen-v2-xsmall-q5"  # 軽量モデル（ビームサーチ・長文用）
 use_context = true              # Surrounding Textを変換に使用する
 context_chars = 10              # 変換に使う前後テキストの最大文字数
@@ -47,6 +47,22 @@ digit = "half"                 # 0-9
 | [`jinen-v1.1-beta-q5`](https://huggingface.co/togatogah/jinen-v1.1-beta.gguf) | Qwen3 | 109M（beta） | 86.0% |
 | [`jinen-v1-small-q5`](https://huggingface.co/togatogah/jinen-v1-small.gguf) | GPT-2 | 90M | 76.5% |
 | [`jinen-v1-xsmall-q5`](https://huggingface.co/togatogah/jinen-v1-xsmall.gguf) | GPT-2 | 26M | 71.0% |
+
+### 自作モデルを使う
+
+`model` / `light_model` にはモデルIDのほかに、次の2形式で任意のGGUFモデルを指定できます（karukan-engine の再ビルドは不要です）。
+
+```toml
+[conversion]
+# Hugging Face のリポジトリから取得する形式: "hf:オーナー/リポジトリ/ファイル名"
+model = "hf:togatogah/jinen-v2-small.gguf/jinen-v2-small-Q5_K_M.gguf"
+
+# ローカルのGGUFファイルを直接使う形式（".gguf" で終わるパス）
+model = "/home/user/models/my-model.gguf"
+```
+
+- `hf:` 形式はモデルIDと同様、初回起動時にバックグラウンドで自動ダウンロードされます。tokenizer は同じリポジトリの `tokenizer.json` を使います（karukan-jinen の出力にはこのファイルが含まれます）
+- ローカルパスの場合、tokenizer は同じディレクトリの `tokenizer.json` を読みます。無いとモデルの読み込みに失敗するので、GGUFと同じ場所に `tokenizer.json` を置いてください
 
 > [!NOTE]
 > 上記は主要な設定項目の抜粋です。全項目の正確な既定値と説明は [`config/default.toml`](../karukan-im/core/config/default.toml) を参照してください（各設定行に日本語コメント付き）。

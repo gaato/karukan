@@ -191,3 +191,32 @@ fn test_truncate_context() {
     let jp = engine.truncate_context("今日はとても良い天気");
     assert_eq!(jp.chars().count(), 5); // Last 5 chars
 }
+
+#[test]
+fn test_resolve_model_spec() {
+    let default = karukan_engine::kanji::registry().default_model.clone();
+
+    // None or empty falls back to the registry default
+    assert_eq!(resolve_model_spec(None).unwrap(), default);
+    assert_eq!(resolve_model_spec(Some("")).unwrap(), default);
+
+    // Known variant id resolves to itself
+    assert_eq!(
+        resolve_model_spec(Some("jinen-v2-small-q5")).unwrap(),
+        "jinen-v2-small-q5"
+    );
+
+    // hf: specs and .gguf paths pass through untouched
+    assert_eq!(
+        resolve_model_spec(Some("hf:owner/repo/model.gguf")).unwrap(),
+        "hf:owner/repo/model.gguf"
+    );
+    assert_eq!(
+        resolve_model_spec(Some("/tmp/model.gguf")).unwrap(),
+        "/tmp/model.gguf"
+    );
+
+    // Unknown variant id and malformed hf: spec are errors
+    assert!(resolve_model_spec(Some("nonexistent-model-id")).is_err());
+    assert!(resolve_model_spec(Some("hf:owner/repo")).is_err());
+}

@@ -1,11 +1,12 @@
 //! Backend interface for kanji conversion using llama.cpp
 
 use super::error::KanjiError;
-use super::hf_download::{get_tokenizer_path, get_variant_path};
+use super::hf_download::{download_gguf, get_tokenizer_path, get_variant_path};
 use super::llamacpp::LlamaCppModel;
 use super::model_config::{ModelFamily, VariantConfig, registry};
 use super::{CONTEXT_TOKEN, INPUT_START_TOKEN, OUTPUT_START_TOKEN};
 use crate::kana::{hiragana_to_katakana, normalize_nfkc};
+use std::path::Path;
 
 type Result<T> = super::error::Result<T>;
 
@@ -42,12 +43,60 @@ pub fn clean_model_output(text: &str) -> String {
     text.trim().to_string()
 }
 
+/// A parsed `model` / `light_model` config value.
+///
+/// Three forms, told apart by shape: `hf:` prefix → HuggingFace repo,
+/// `.gguf` suffix → local path, anything else → registry variant id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelSpec {
+    /// Variant id from the `models.toml` registry (e.g. `jinen-v2-small-q5`)
+    Variant(String),
+    /// `hf:owner/repo/filename.gguf`: GGUF plus `tokenizer.json` from that repo
+    Hf { repo_id: String, filename: String },
+    /// Local GGUF path, with `tokenizer.json` in the same directory
+    Path(String),
+}
+
+impl std::str::FromStr for ModelSpec {
+    type Err = KanjiError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        if let Some(rest) = s.strip_prefix("hf:") {
+            // First two segments are the repo id, the rest is the filename.
+            let mut parts = rest.splitn(3, '/');
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(owner), Some(repo), Some(filename))
+                    if !owner.is_empty() && !repo.is_empty() && !filename.is_empty() =>
+                {
+                    Ok(ModelSpec::Hf {
+                        repo_id: format!("{owner}/{repo}"),
+                        filename: filename.to_string(),
+                    })
+                }
+                _ => Err(KanjiError::InvalidSpec(s.to_string())),
+            }
+        } else if s.ends_with(".gguf") {
+            Ok(ModelSpec::Path(s.to_string()))
+        } else {
+            Ok(ModelSpec::Variant(s.to_string()))
+        }
+    }
+}
+
+/// File stem used as the display name (`models/my.gguf` → `my`).
+fn file_stem(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
 /// Inference backend configuration (llama.cpp GGUF format with external tokenizer)
 #[derive(Debug, Clone)]
 pub struct Backend {
     gguf_path: String,
     tokenizer_json_path: String,
-    /// Display name for the model (variant id for registry models, "custom" for GGUF paths)
+    /// Display name (variant id for registry models, GGUF file stem otherwise)
     display_name: String,
 }
 
@@ -73,6 +122,41 @@ impl Backend {
             .find_variant(variant_id)
             .ok_or_else(|| KanjiError::UnknownVariant(variant_id.to_string()))?;
         Self::from_variant(family, variant)
+    }
+
+    /// Create a backend from a config model spec (see [`ModelSpec`]).
+    pub fn from_spec(spec: &str) -> Result<Self> {
+        match spec.parse::<ModelSpec>()? {
+            ModelSpec::Variant(id) => Self::from_variant_id(&id),
+            ModelSpec::Hf { repo_id, filename } => {
+                let gguf = download_gguf(&repo_id, &filename)?;
+                let tokenizer = download_gguf(&repo_id, "tokenizer.json")?;
+                Ok(Backend {
+                    gguf_path: gguf.to_string_lossy().into_owned(),
+                    tokenizer_json_path: tokenizer.to_string_lossy().into_owned(),
+                    display_name: file_stem(&filename),
+                })
+            }
+            ModelSpec::Path(path) => {
+                let gguf = Path::new(&path);
+                if !gguf.is_file() {
+                    return Err(KanjiError::ModelLoad(
+                        format!("GGUF file not found: {path}").into(),
+                    ));
+                }
+                let tokenizer = gguf.with_file_name("tokenizer.json");
+                if !tokenizer.is_file() {
+                    return Err(KanjiError::TokenizerNotFound(
+                        tokenizer.to_string_lossy().into_owned(),
+                    ));
+                }
+                Ok(Backend {
+                    tokenizer_json_path: tokenizer.to_string_lossy().into_owned(),
+                    display_name: file_stem(&path),
+                    gguf_path: path,
+                })
+            }
+        }
     }
 }
 
@@ -181,7 +265,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_model_spec_parse() {
+        assert_eq!(
+            "jinen-v2-small-q5".parse::<ModelSpec>().unwrap(),
+            ModelSpec::Variant("jinen-v2-small-q5".to_string())
+        );
+        assert_eq!(
+            "hf:owner/repo/model.gguf".parse::<ModelSpec>().unwrap(),
+            ModelSpec::Hf {
+                repo_id: "owner/repo".to_string(),
+                filename: "model.gguf".to_string()
+            }
+        );
+        // Everything after the repo id is the filename, slashes included
+        assert_eq!(
+            "hf:owner/repo/sub/model.gguf".parse::<ModelSpec>().unwrap(),
+            ModelSpec::Hf {
+                repo_id: "owner/repo".to_string(),
+                filename: "sub/model.gguf".to_string()
+            }
+        );
+        assert_eq!(
+            "/tmp/model.gguf".parse::<ModelSpec>().unwrap(),
+            ModelSpec::Path("/tmp/model.gguf".to_string())
+        );
+    }
 
+    #[test]
+    fn test_model_spec_parse_invalid_hf() {
+        for spec in [
+            "hf:",
+            "hf:owner",
+            "hf:owner/repo",
+            "hf:owner/repo/",
+            "hf://x.gguf",
+        ] {
+            assert!(
+                matches!(spec.parse::<ModelSpec>(), Err(KanjiError::InvalidSpec(_))),
+                "'{spec}' should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_spec_unknown_variant() {
+        assert!(matches!(
+            Backend::from_spec("nonexistent-model-id"),
+            Err(KanjiError::UnknownVariant(_))
+        ));
+    }
+
+    #[test]
+    fn test_from_spec_local_path_missing_gguf() {
+        let dir = tempfile::tempdir().unwrap();
+        let gguf = dir.path().join("missing.gguf");
+        assert!(matches!(
+            Backend::from_spec(gguf.to_str().unwrap()),
+            Err(KanjiError::ModelLoad(_))
+        ));
+    }
+
+    #[test]
+    fn test_from_spec_local_path_missing_tokenizer() {
+        let dir = tempfile::tempdir().unwrap();
+        let gguf = dir.path().join("my-model.gguf");
+        std::fs::write(&gguf, b"").unwrap();
+        let err = Backend::from_spec(gguf.to_str().unwrap()).unwrap_err();
+        assert!(matches!(err, KanjiError::TokenizerNotFound(_)));
+        assert!(err.to_string().contains("tokenizer.json"));
+    }
+
+    #[test]
+    fn test_from_spec_local_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let gguf = dir.path().join("my-model.gguf");
+        std::fs::write(&gguf, b"").unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), b"{}").unwrap();
+        let backend = Backend::from_spec(gguf.to_str().unwrap()).unwrap();
+        assert_eq!(backend.gguf_path, gguf.to_str().unwrap());
+        assert_eq!(
+            backend.tokenizer_json_path,
+            dir.path().join("tokenizer.json").to_str().unwrap()
+        );
+        assert_eq!(backend.display_name, "my-model");
+    }
+
+    #[test]
     fn test_default_model_conversion() {
         let backend =
             Backend::from_variant_id("jinen-v2-small-q5").expect("Failed to load default model");
