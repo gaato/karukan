@@ -181,6 +181,27 @@ impl InputMethodEngine {
         format!("{}/{}", reading.chars().count(), max)
     }
 
+    /// The reading part of the conversion line, in the shape the composing
+    /// line uses: the caret's chunk and how full it is, so typing and
+    /// converting report the same thing. A view that passes its own text (a
+    /// predictive entry's 「query → reading」) keeps that text and only takes
+    /// the counter. No chunk grid means no counter, as while composing.
+    fn conversion_reading(&self, shown: &str) -> String {
+        let Some(chunk) = self.current_chunk_reading() else {
+            return shown.to_string();
+        };
+        let fill = self.fill(chunk, self.chunk_chars());
+        let head = if self.state.reading() == Some(shown) {
+            chunk
+        } else {
+            shown
+        };
+        if head.is_empty() {
+            return fill;
+        }
+        format!("{head} {fill}")
+    }
+
     /// The span the conversion beams for alternatives, labelled and with
     /// its `used/max` counter, so which part got them is visible.
     ///
@@ -198,7 +219,10 @@ impl InputMethodEngine {
         // the counter restarts like the composing aux does and the cut is
         // visible.
         if self.chunk_breaks.contains(&chars.len()) {
-            return Some(self.fill("", self.config.beam_chars));
+            return Some(format!(
+                "{BEAM_SPAN_LABEL} {}",
+                self.fill("", self.config.beam_chars)
+            ));
         }
         let start = self.beam_span_start(&chars);
         if start >= chars.len() {
@@ -206,9 +230,8 @@ impl InputMethodEngine {
         }
         let span: String = chars[start..].iter().collect();
         let fill = self.fill(&span, self.config.beam_chars);
-        // Only the span, like the composing aux shows only the chunk being
-        // typed: the label says what it is, and the candidate window
-        // already shows the full text each candidate commits.
+        // The span, not the whole reading: the label says what it is, and the
+        // line already carries the reading each candidate commits.
         Some(format!("{BEAM_SPAN_LABEL} {span} {fill}"))
     }
 
@@ -270,18 +293,22 @@ impl InputMethodEngine {
             .filter(|c| c.is_deletable())
             .map(|_| format!(" ({})", LEARNING_DELETE_HINT))
             .unwrap_or_default();
-        // Active Ctrl+R source filter, shown in the header so the user
-        // knows the window is narrowed (e.g. [変換:📝]).
+        // The input mode leads the line as it does while composing — a
+        // candidate window is open for keystrokes too (typing refines the
+        // reading, Shift+letter switches to direct input), so which mode is
+        // in force belongs here. Then the active Ctrl+R source filter, so
+        // the user knows the window is narrowed (e.g. [あ][変換:📝]).
         let header = match self.state.filter().map(|s| s.emoji()) {
-            Some(emoji) => format!("[変換:{}]", emoji),
-            None => "[変換]".to_string(),
+            Some(emoji) => format!("{}[変換:{}]", self.mode_indicator(), emoji),
+            None => format!("{}[変換]", self.mode_indicator()),
         };
+        let shown = self.conversion_reading(reading);
         if !self.config.verbose {
-            return format!("{header}{page_info} {reading}{empty_note}{source_label}{delete_hint}");
+            return format!("{header}{page_info} {shown}{empty_note}{source_label}{delete_hint}");
         }
-        let reading = self
-            .conversion_chunk_reading(reading)
-            .unwrap_or_else(|| reading.to_string());
+        // Verbose swaps the chunk for the beam span: the same shape counted
+        // against `beam_chars`, the cap on what the alternatives cover.
+        let shown = self.conversion_chunk_reading(reading).unwrap_or(shown);
         let ctx = Some(self.display_context())
             .filter(|c| !c.is_empty())
             .map(|c| format!(" | {c}"))
@@ -289,7 +316,7 @@ impl InputMethodEngine {
         let timing = self.aux_timing();
         let model = self.last_used_model();
         format!(
-            "{header}{page_info} {reading}{empty_note}{ctx} | {timing} | {model}{source_label}{delete_hint}"
+            "{header}{page_info} {shown}{empty_note}{ctx} | {timing} | {model}{source_label}{delete_hint}"
         )
     }
 
