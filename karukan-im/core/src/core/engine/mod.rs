@@ -480,18 +480,14 @@ impl InputMethodEngine {
             // An open candidate window keeps its own line, mode indicator
             // included: a composing line here would hide the source-filter
             // header mid-view.
-            if let InputState::Conversion {
-                reading,
-                candidates,
-                ..
-            } = &self.state
-            {
-                let aux = self.format_aux_conversion(reading, candidates);
-                return Some(
-                    EngineResult::consumed().with_action(EngineAction::UpdateAuxText(aux)),
-                );
-            }
-            let aux = self.format_aux_composing();
+            let aux = match &self.state {
+                InputState::Conversion {
+                    reading,
+                    candidates,
+                    ..
+                } => self.format_aux_conversion(reading, candidates),
+                _ => self.format_aux_composing(),
+            };
             if matches!(self.state, InputState::Composing { .. }) {
                 let preedit = self.set_composing_state();
                 return Some(

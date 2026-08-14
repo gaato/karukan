@@ -877,17 +877,14 @@ fn test_conversion_aux_shows_the_beamed_chunk() {
 
 #[test]
 fn test_aux_is_quiet_by_default() {
-    // The debug details are opt-in: a default engine shows the mode, the
-    // state, the chunk being typed with its fill counter and the selected
-    // candidate's source — the same quiet line composing shows — and
-    // nothing else.
+    // The debug details are opt-in: a default engine shows the quiet line
+    // composing shows plus the conversion's own fields, nothing else.
     let mut engine = InputMethodEngine::new();
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     let result = engine.process_key(&press_key(Keysym::SPACE));
     let aux = last_aux_text(&result).expect("aux");
-    assert!(aux.starts_with("[あ][変換]"), "aux was: {aux}");
-    assert!(aux.contains("あい 2/30"), "aux was: {aux}");
+    assert!(aux.contains("あい"), "aux was: {aux}");
     for noise in ["ms", "🎯", "jinen"] {
         assert!(!aux.contains(noise), "`{noise}` must be opt-in: {aux}");
     }
@@ -896,8 +893,8 @@ fn test_aux_is_quiet_by_default() {
 #[test]
 fn test_conversion_aux_reports_mode_and_chunk_like_composing() {
     // Space must not blank out what typing reported: the window leads with
-    // the same mode indicator and carries the same chunk fill counter, so
-    // the line only gains the conversion's own fields.
+    // the same mode indicator and carries the composing line's own reading
+    // field, so the line only gains the conversion's own fields.
     let mut engine = InputMethodEngine::new();
     engine.process_key(&press('a'));
     let composing = last_aux_text(&engine.process_key(&press('i'))).expect("aux");
@@ -910,6 +907,19 @@ fn test_conversion_aux_reports_mode_and_chunk_like_composing() {
     assert!(aux.starts_with("[あ][変換]"), "aux was: {aux}");
     assert!(aux.contains("あい 2/30"), "aux was: {aux}");
 
+    // An unfired romaji tail rides along in both states, as typed.
+    let mut engine = InputMethodEngine::new();
+    for ch in ['a', 'i'] {
+        engine.process_key(&press(ch));
+    }
+    let composing = last_aux_text(&engine.process_key(&press('k'))).expect("aux");
+    assert!(
+        composing.starts_with("[あ] あいk 2/30"),
+        "aux was: {composing}"
+    );
+    let aux = last_aux_text(&engine.process_key(&press_key(Keysym::SPACE))).expect("aux");
+    assert!(aux.starts_with("[あ][変換] あいk 2/30"), "aux was: {aux}");
+
     // A reading past the cap shows the caret's chunk alone, as composing
     // does — the counter would read 4/2 against the whole reading.
     let mut engine = InputMethodEngine::new();
@@ -920,6 +930,34 @@ fn test_conversion_aux_reports_mode_and_chunk_like_composing() {
     let aux = last_aux_text(&engine.process_key(&press_key(Keysym::SPACE))).expect("aux");
     assert!(aux.contains("うえ 2/2"), "aux was: {aux}");
     assert!(!aux.contains("あいうえ"), "frozen head is not shown: {aux}");
+}
+
+#[test]
+fn test_typing_in_a_filtered_view_keeps_the_reading_field() {
+    // Regression: typing inside a view suppresses the suggestion, which
+    // clears the chunk grid. Reading the counter off the grid made it (and
+    // the romaji tail) vanish from the second keystroke on, so the field is
+    // split fresh from the buffer instead.
+    let mut engine = engine_in_conversion();
+    open_model_view(&mut engine);
+
+    let aux = last_aux_text(&engine.process_key(&press('k'))).expect("aux");
+    assert!(
+        aux.starts_with("[あ][変換:🤖] あいk 2/30"),
+        "aux was: {aux}"
+    );
+
+    let aux = last_aux_text(&engine.process_key(&press('a'))).expect("aux");
+    assert!(
+        aux.starts_with("[あ][変換:🤖] あいか 3/30"),
+        "aux was: {aux}"
+    );
+
+    let aux = last_aux_text(&engine.process_key(&press('s'))).expect("aux");
+    assert!(
+        aux.starts_with("[あ][変換:🤖] あいかs 3/30"),
+        "aux was: {aux}"
+    );
 }
 
 #[test]

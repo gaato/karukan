@@ -153,12 +153,14 @@ impl InputMethodEngine {
     /// no chunk yet and restarts the counter at `0/max`, making the cut
     /// visible.
     fn aux_reading(&self) -> String {
+        // Nothing typed, nothing to count.
+        if self.input_buf.is_empty() {
+            return String::new();
+        }
         let pending = self.input_buf.pending();
-        let Some(reading) = self.current_chunk_reading() else {
-            return format!("{}{}", self.input_buf.reading(), pending);
-        };
-        let head = format!("{}{}", reading, pending);
-        let fill = self.fill(reading, self.chunk_chars());
+        let chunk = self.caret_chunk_reading();
+        let head = format!("{}{}", chunk, pending);
+        let fill = self.fill(&chunk, self.chunk_chars());
         if head.is_empty() {
             fill
         } else {
@@ -181,25 +183,19 @@ impl InputMethodEngine {
         format!("{}/{}", reading.chars().count(), max)
     }
 
-    /// The reading part of the conversion line, in the shape the composing
-    /// line uses: the caret's chunk and how full it is, so typing and
-    /// converting report the same thing. A view that passes its own text (a
-    /// predictive entry's 「query → reading」) keeps that text and only takes
-    /// the counter. No chunk grid means no counter, as while composing.
+    /// The reading part of the conversion line: the composing line's own
+    /// field ([`Self::aux_reading`]), so typing and converting report the
+    /// same chunk, the same romaji tail and the same counter.
+    ///
+    /// A view that passes its own text (a predictive entry's 「query →
+    /// reading」) is not a chunk, so that text stays and only the counter is
+    /// taken from the chunk.
     fn conversion_reading(&self, shown: &str) -> String {
-        let Some(chunk) = self.current_chunk_reading() else {
-            return shown.to_string();
-        };
-        let fill = self.fill(chunk, self.chunk_chars());
-        let head = if self.state.reading() == Some(shown) {
-            chunk
-        } else {
-            shown
-        };
-        if head.is_empty() {
-            return fill;
+        if self.state.reading() == Some(shown) {
+            return self.aux_reading();
         }
-        format!("{head} {fill}")
+        let fill = self.fill(&self.caret_chunk_reading(), self.chunk_chars());
+        format!("{shown} {fill}")
     }
 
     /// The span the conversion beams for alternatives, labelled and with
