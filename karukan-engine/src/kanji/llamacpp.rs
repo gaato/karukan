@@ -48,6 +48,9 @@ const KV_HEADROOM_CELLS: usize = 64;
 /// Spare batch slots beyond the computed prompt / sequence rows.
 const BATCH_HEADROOM: usize = 8;
 
+/// Tokens the draft model proposes per speculative round.
+const DRAFT_MAX: usize = 8;
+
 /// Pack `s` into the fixed-size buffer llama.cpp reads override values out
 /// of: a NUL-terminated C string in a 128-byte array (`val_str` in
 /// `llama_model_kv_override`). The array starts zeroed, so the bytes left
@@ -308,6 +311,158 @@ impl LlamaCppModel {
             eos_token_id,
             LlamaSampler::greedy(),
         )
+    }
+
+    /// Speculative greedy decoding: `draft` proposes up to [`DRAFT_MAX`]
+    /// tokens greedily, `self` (the target) verifies them in one decode
+    /// batch, accepts the longest argmax-matching prefix, and appends its
+    /// own argmax once more (the correction on a mismatch, a bonus token on
+    /// full acceptance). Every accepted token is the target's greedy argmax
+    /// at its position, so the output is identical to [`Self::generate`].
+    ///
+    /// Requires a draft sharing the target's tokenizer. Falls back to
+    /// [`Self::generate`] when the vocabularies differ or the prompt plus
+    /// generation plus draft headroom would not fit either context.
+    pub fn generate_speculative(
+        &self,
+        draft: &LlamaCppModel,
+        input_tokens: &[LlamaToken],
+        max_new_tokens: usize,
+        eos_token_id: Option<i32>,
+    ) -> Result<Vec<LlamaToken>> {
+        let input_len = input_tokens.len();
+        // The target context briefly holds up to DRAFT_MAX unverified tokens
+        // past the generation frontier; both contexts must have room for them.
+        let needed = input_len + max_new_tokens + DRAFT_MAX;
+        if input_len == 0
+            || max_new_tokens == 0
+            || needed > self.n_ctx as usize
+            || needed > draft.n_ctx as usize
+            || self.model.n_vocab() != draft.model.n_vocab()
+        {
+            return self.generate(input_tokens, max_new_tokens, eos_token_id);
+        }
+
+        let batch_cap = input_len + DRAFT_MAX + BATCH_HEADROOM;
+        let mut target_ctx = self.new_context(
+            self.context_params()
+                .with_n_batch(batch_cap as u32)
+                .with_n_ubatch(batch_cap as u32),
+        )?;
+        let mut draft_ctx = draft.new_context(
+            draft
+                .context_params()
+                .with_n_batch(batch_cap as u32)
+                .with_n_ubatch(batch_cap as u32),
+        )?;
+
+        let mut batch = LlamaBatch::new(batch_cap, 1);
+        self.add_input_tokens(&mut batch, input_tokens)?;
+        target_ctx.decode(&mut batch).map_err(inference_err)?;
+        batch.clear();
+        self.add_input_tokens(&mut batch, input_tokens)?;
+        draft_ctx.decode(&mut batch).map_err(inference_err)?;
+
+        // Greedy sampling is stateless, so one sampler serves both models.
+        let mut sampler = LlamaSampler::greedy();
+        let model_eos = self.model.token_eos();
+        let draft_eos = draft.model.token_eos();
+
+        let mut generated = input_tokens.to_vec();
+        // The target's argmax for the frontier position, known from the
+        // prompt prefill. Only the first round uses it: later rounds read
+        // the frontier argmax out of the verify batch via `pending`.
+        let mut verified_next = Some(sampler.sample(&target_ctx, -1));
+        // Accepted token not yet decoded into the target context. It rides
+        // at the head of the next verify batch, so accepting a token costs
+        // the target no decode of its own.
+        let mut pending: Option<LlamaToken> = None;
+
+        'outer: while generated.len() - input_len < max_new_tokens {
+            let frontier = generated.len();
+            let remaining = max_new_tokens - (generated.len() - input_len);
+
+            // (a) Draft phase: greedy proposals, decoded into the draft
+            // context one by one; its own EOS stops the run early.
+            let mut proposals: Vec<LlamaToken> = Vec::with_capacity(DRAFT_MAX);
+            while proposals.len() < DRAFT_MAX.min(remaining) {
+                let token = sampler.sample(&draft_ctx, -1);
+                if draft.is_eos_token(token, eos_token_id, draft_eos) {
+                    break;
+                }
+                batch.clear();
+                batch
+                    .add(token, (frontier + proposals.len()) as i32, &[0], true)
+                    .map_err(inference_err)?;
+                draft_ctx.decode(&mut batch).map_err(inference_err)?;
+                proposals.push(token);
+            }
+
+            // (b) Verify phase: one decode over the pending token plus all
+            // proposals, logits at every row. `expected[i]` is the target's
+            // argmax for the token at frontier + i; the pending row (or the
+            // prefill, in the first round) supplies `expected[0]`.
+            let mut expected: Vec<LlamaToken> = Vec::with_capacity(proposals.len() + 1);
+            batch.clear();
+            if let Some(token) = pending.take() {
+                batch
+                    .add(token, frontier as i32 - 1, &[0], true)
+                    .map_err(inference_err)?;
+            } else {
+                expected.push(verified_next.take().expect("seeded at prefill"));
+            }
+            for (i, &token) in proposals.iter().enumerate() {
+                batch
+                    .add(token, (frontier + i) as i32, &[0], true)
+                    .map_err(inference_err)?;
+            }
+            if batch.n_tokens() > 0 {
+                target_ctx.decode(&mut batch).map_err(inference_err)?;
+                for i in 0..batch.n_tokens() {
+                    expected.push(sampler.sample(&target_ctx, i));
+                }
+            }
+
+            // (c) Accept the longest matching prefix plus the target's own
+            // next token, with the same per-token EOS/limit checks as
+            // `generate`.
+            let n_match = proposals
+                .iter()
+                .zip(&expected)
+                .take_while(|(p, e)| p == e)
+                .count();
+            for &token in &expected[..=n_match] {
+                if self.is_eos_token(token, eos_token_id, model_eos) {
+                    break 'outer;
+                }
+                generated.push(token);
+                if generated.len() - input_len >= max_new_tokens {
+                    break 'outer;
+                }
+            }
+
+            // (d) Roll both KV caches back to the accepted frontier. The
+            // correction/bonus token becomes the next round's pending row on
+            // the target side; the draft eats it now — its logits are what
+            // the next round drafts from.
+            let keep = (frontier + n_match) as u32;
+            target_ctx
+                .kv_cache_seq_rm(0, Some(keep), None)
+                .map_err(inference_err)?;
+            draft_ctx
+                .kv_cache_seq_rm(0, Some(keep), None)
+                .map_err(inference_err)?;
+
+            let next = expected[n_match];
+            pending = Some(next);
+            batch.clear();
+            batch
+                .add(next, keep as i32, &[0], true)
+                .map_err(inference_err)?;
+            draft_ctx.decode(&mut batch).map_err(inference_err)?;
+        }
+
+        Ok(generated)
     }
 
     /// Depth-1 beam: pick the top-k initial tokens, then continue each
@@ -1064,6 +1219,97 @@ mod beam_search_tests {
                 .generate_beam_search(&tokens, 3, eos, 200)
                 .expect("oversized beam must be clamped, not abort")
                 .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+mod speculative_tests {
+    use super::*;
+    use crate::kanji::build_jinen_prompt;
+    use crate::kanji::hf_download::{get_path_by_id, get_tokenizer_path_by_id};
+    use crate::kanji::model_config::registry;
+
+    /// Load a registry variant, or `None` when it isn't available locally
+    /// (the tests are skipped rather than failing offline).
+    fn load_variant(variant_id: &str) -> Option<LlamaCppModel> {
+        let path = get_path_by_id(variant_id).ok()?;
+        let tok_path = get_tokenizer_path_by_id(variant_id).ok()?;
+        LlamaCppModel::from_file(&path, &tok_path).ok()
+    }
+
+    fn load_pair() -> Option<(LlamaCppModel, LlamaCppModel)> {
+        let target = load_variant(&registry().default_model)?;
+        let draft = load_variant("jinen-v2-xsmall-q5")?;
+        Some((target, draft))
+    }
+
+    /// Speculative decoding must emit exactly what plain greedy emits: the
+    /// target's argmax decides every accepted token, so any divergence here
+    /// means the verification or the KV rollback is wrong.
+    #[test]
+    fn matches_plain_greedy() {
+        let Some((target, draft)) = load_pair() else {
+            eprintln!("models unavailable, skipping");
+            return;
+        };
+        let eos = Some(target.eos_token_id().0);
+
+        let cases = [
+            ("カンジ", ""),
+            ("ヘンカン", ""),
+            ("キョウハイイテンキデスネ", ""),
+            ("トウキョウエキデマチアワセヲシテカラショクジニイク", ""),
+            ("コウエンニイッタ", "昨日は"),
+            ("ギジュツショヲヨム、ソレガシュミダ", "週末の予定。"),
+        ];
+        for (katakana, context) in cases {
+            let prompt = build_jinen_prompt(katakana, context);
+            let tokens = target.tokenize(&prompt).expect("tokenize failed");
+
+            let greedy = target
+                .generate(&tokens, 50, eos)
+                .expect("greedy generation failed");
+            let speculative = target
+                .generate_speculative(&draft, &tokens, 50, eos)
+                .expect("speculative generation failed");
+
+            assert_eq!(
+                speculative,
+                greedy,
+                "output diverged for {katakana} (context: {context}): \
+                 speculative={:?} greedy={:?}",
+                target.decode(&speculative, true),
+                target.decode(&greedy, true),
+            );
+        }
+    }
+
+    /// Inputs that cannot run speculatively (no room in the context window,
+    /// degenerate lengths) must still match plain greedy via the fallback.
+    #[test]
+    fn falls_back_when_it_cannot_speculate() {
+        let Some((target, draft)) = load_pair() else {
+            eprintln!("models unavailable, skipping");
+            return;
+        };
+        let eos = Some(target.eos_token_id().0);
+        let prompt = build_jinen_prompt("ヘンカン", "");
+        let tokens = target.tokenize(&prompt).expect("tokenize failed");
+
+        // prompt + 250 + DRAFT_MAX exceeds n_ctx (256).
+        let greedy = target.generate(&tokens, 250, eos).expect("greedy failed");
+        let speculative = target
+            .generate_speculative(&draft, &tokens, 250, eos)
+            .expect("fallback failed");
+        assert_eq!(speculative, greedy, "fallback output diverged");
+
+        assert_eq!(
+            target
+                .generate_speculative(&draft, &tokens, 0, eos)
+                .expect("max_new_tokens=0 must not panic"),
+            tokens,
+            "max_new_tokens=0 must generate nothing"
         );
     }
 }

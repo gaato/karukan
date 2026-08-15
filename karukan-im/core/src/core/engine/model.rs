@@ -96,9 +96,17 @@ impl InputMethodEngine {
         };
         let key = Self::cache_key(model, beam_width, katakana, lctx);
         let start = Instant::now();
-        let candidates = converter
-            .convert(katakana, lctx, beam_width)
-            .unwrap_or_default();
+        // Main greedy runs speculatively when the light model is loaded.
+        // The draft never changes the output — it equals a plain main
+        // greedy run, so the cache key stays the same.
+        let draft = (model == ModelRole::Main && beam_width == 1)
+            .then(|| self.converter_for(ModelRole::Light))
+            .flatten();
+        let candidates = match draft {
+            Some(draft) => converter.convert_with_draft(draft, katakana, lctx),
+            None => converter.convert(katakana, lctx, beam_width),
+        }
+        .unwrap_or_default();
         let elapsed = start.elapsed().as_millis() as u64;
         if !candidates.is_empty() {
             self.conversion_cache.insert(key, candidates.clone());

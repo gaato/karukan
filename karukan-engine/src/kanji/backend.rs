@@ -170,6 +170,41 @@ impl KanaKanjiConverter {
         Ok(candidates)
     }
 
+    /// Greedy conversion via speculative decoding: `draft` proposes tokens,
+    /// this converter's model verifies them. The output is identical to
+    /// `convert(reading, context, 1)`; the draft must share the tokenizer
+    /// (checked inside, with a plain greedy fallback).
+    pub fn convert_with_draft(
+        &self,
+        draft: &KanaKanjiConverter,
+        reading: &str,
+        context: &str,
+    ) -> Result<Vec<String>> {
+        let katakana = hiragana_to_katakana(reading);
+        let prompt = build_jinen_prompt(&katakana, context);
+        let tokens = self.model.tokenize(&prompt)?;
+        let eos = Some(self.model.eos_token_id().0);
+
+        let output_tokens = self.model.generate_speculative(
+            &draft.model,
+            &tokens,
+            self.config.max_new_tokens,
+            eos,
+        )?;
+        let generated = &output_tokens[tokens.len()..];
+        let text = self.model.decode(generated, true)?;
+        let clean = clean_model_output(&text);
+
+        let mut candidates = Vec::with_capacity(1);
+        if !clean.is_empty() {
+            candidates.push(clean);
+        }
+        if candidates.is_empty() {
+            candidates.push(reading.to_string());
+        }
+        Ok(candidates)
+    }
+
     /// Get a human-readable model name for display
     pub fn model_display_name(&self) -> &str {
         &self.display_name

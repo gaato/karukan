@@ -21,6 +21,11 @@ struct Cli {
     #[arg(long, default_value = "jinen-v2-xsmall-q5")]
     model: String,
 
+    /// Draft model variant id for speculative decoding (e.g. jinen-v2-xsmall-q5).
+    /// Must share the main model's tokenizer; output is identical to greedy.
+    #[arg(long)]
+    draft_model: Option<String>,
+
     /// Direct GGUF file path (overrides --model)
     #[arg(long)]
     gguf: Option<PathBuf>,
@@ -153,6 +158,12 @@ fn main() -> Result<()> {
         cli.n_ctx,
     )?;
 
+    let draft = cli
+        .draft_model
+        .as_deref()
+        .map(|id| karukan_cli::load_llama_model(None, None, id, cli.n_ctx))
+        .transpose()?;
+
     let eos = Some(model.eos_token_id().0);
 
     // Load benchmark
@@ -168,6 +179,7 @@ fn main() -> Result<()> {
     let mut total_cer = 0.0f64;
     let mut nfkc_exact_matches = 0usize;
     let mut nfkc_total_cer = 0.0f64;
+    let mut total_generation = std::time::Duration::ZERO;
 
     for (idx, item) in items.iter().enumerate() {
         if item.input.is_empty() {
@@ -189,7 +201,12 @@ fn main() -> Result<()> {
             .tokenize(&prompt)
             .with_context(|| format!("Failed to tokenize example {}", idx + 1))?;
 
-        let output_tokens = model.generate(&tokens, 100, eos)?;
+        let gen_start = std::time::Instant::now();
+        let output_tokens = match &draft {
+            Some(draft) => model.generate_speculative(draft, &tokens, 100, eos)?,
+            None => model.generate(&tokens, 100, eos)?,
+        };
+        total_generation += gen_start.elapsed();
         let generated = &output_tokens[tokens.len()..];
         let text = model.decode(generated, true)?;
 
@@ -293,6 +310,17 @@ fn main() -> Result<()> {
         nfkc_exact_match_rate * 100.0
     );
     println!("Avg min CER      (NFKC): {:.4}", nfkc_avg_min_cer);
+    println!("{}", "-".repeat(50));
+    println!(
+        "Total generation time: {:.2}s",
+        total_generation.as_secs_f64()
+    );
+    if num_examples > 0 {
+        println!(
+            "Avg per item:          {:.1}ms",
+            total_generation.as_secs_f64() * 1000.0 / num_examples as f64
+        );
+    }
     println!("{}", "=".repeat(50));
 
     // Save detailed results if requested
