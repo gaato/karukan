@@ -1694,6 +1694,7 @@ dependencies = [
  "clap",
  "indicatif",
  "karukan-engine",
+ "karukan-im",
  "rayon",
  "serde",
  "serde_json",
