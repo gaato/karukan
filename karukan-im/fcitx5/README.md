@@ -8,7 +8,7 @@ Linux向け日本語IME（fcitx5アドオン）。[karukan-im](../core/) エン�
 
 ### パッケージからインストール
 
-以下の環境ではパッケージが用意されています。インストール後は「[Prerequisites](#prerequisites)」以降のビルド手順は不要です。システム辞書のインストール（[dictionary.md](../../docs/dictionary.md)）と fcitx5-configtool での有効化は同じです。
+以下の環境ではパッケージが用意されています。パッケージで入れた場合、「[Prerequisites](#prerequisites)」と「Build & Install」の手順は不要です。システム辞書のインストール（[dictionary.md](../../docs/dictionary.md)）と fcitx5-configtool での有効化は同じです。
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/karukan.svg)](https://repology.org/project/karukan/versions)
 
